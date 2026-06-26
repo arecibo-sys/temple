@@ -672,47 +672,120 @@ function drawCoin(p,rz){
   ctx.shadowBlur=0;
 }
 
+// tapered limb between two points
+function limb(x1,y1,x2,y2,w,col){
+  ctx.strokeStyle=col; ctx.lineWidth=w; ctx.lineCap='round';
+  ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2); ctx.stroke();
+}
+// A running woman, viewed from behind (she runs into the screen).
 function drawPlayer(){
-  const rz=0.85;
-  const s=depthScale(rz);
-  const x=W/2 + (G.x - G.x)*s + (G.targetX===G.x?0:0); // centered on camera follow
-  const px=W/2 + (G.x - G.x)*s; // player x relative — camera follows so player near center
-  // We want the player to appear slightly off-center when switching lanes:
-  const lateral = (G.x*0); // camera already follows; keep player center
-  const baseY=H*0.58 + CAM_H*s;
-  const py = baseY - G.y*s;
-  const bodyH = (G.sliding?0.7:1.25)*s;
-  const bodyW = (G.sliding?0.9:0.62)*s;
-  const cx=W/2;
-  // shadow
-  const shA=Math.max(0.1,0.5 - G.y*0.3);
-  ctx.fillStyle=`rgba(0,0,0,${shA})`;
-  ctx.beginPath(); ctx.ellipse(cx, baseY, bodyW*0.6, bodyW*0.22, 0,0,7); ctx.fill();
-  // running bob
-  const bob=G.onGround? Math.sin(G.t*18)*0.04*s : 0;
-  const topY = py - bodyH - bob;
-  // body — glowing runner capsule
-  const g=ctx.createLinearGradient(0,topY,0,py);
-  g.addColorStop(0,'#9bfff0'); g.addColorStop(0.5,'#00ffd5'); g.addColorStop(1,'#00b8a0');
-  ctx.fillStyle=g; ctx.shadowColor='#00ffd5'; ctx.shadowBlur=22;
-  roundRect(cx-bodyW/2, topY, bodyW, bodyH, bodyW*0.4); ctx.fill();
-  ctx.shadowBlur=0;
-  // head
-  const hr=bodyW*0.42;
-  ctx.fillStyle='#d8fffa'; ctx.beginPath(); ctx.arc(cx, topY-hr*0.2, hr,0,7); ctx.fill();
-  // visor
-  ctx.fillStyle='#ff2bd6'; ctx.shadowColor='#ff2bd6'; ctx.shadowBlur=12;
-  roundRect(cx-hr*0.7, topY-hr*0.4, hr*1.4, hr*0.5, hr*0.25); ctx.fill();
-  ctx.shadowBlur=0;
-  // legs (simple animated)
-  if(G.onGround && !G.sliding){
-    const lp=Math.sin(G.t*18);
-    ctx.strokeStyle='#00b8a0'; ctx.lineWidth=Math.max(2,bodyW*0.18); ctx.lineCap='round';
-    ctx.beginPath();
-    ctx.moveTo(cx-bodyW*0.18,py-bodyH*0.05); ctx.lineTo(cx-bodyW*0.18+lp*bodyW*0.3, py);
-    ctx.moveTo(cx+bodyW*0.18,py-bodyH*0.05); ctx.lineTo(cx+bodyW*0.18-lp*bodyW*0.3, py);
-    ctx.stroke();
+  const cx = W/2;
+  // unit scale — figure is a small fixed fraction of the screen, looks right on phone & desktop
+  const u  = Math.min(H*0.155, W*0.20) / 9;     // standing height ≈ 9u
+  const fy = H*0.815;                            // feet baseline on the track
+  const lift = G.y * H*0.17;                      // jump height in px
+  const run  = G.onGround && !G.sliding;
+  const phase = G.t*15;
+  const p = run ? Math.sin(phase) : 0;            // gait swing
+  const bob = run ? Math.abs(Math.cos(phase))*0.18*u : 0;
+  // lean into lane changes
+  const lean = Math.max(-0.5,Math.min(0.5,(G.targetX-G.x)*1.4));
+
+  // ground shadow (shrinks while airborne)
+  const shA = Math.max(0.08, 0.42 - G.y*0.25);
+  ctx.fillStyle = `rgba(0,0,0,${shA})`;
+  ctx.beginPath(); ctx.ellipse(cx, fy, 2.4*u, 0.7*u, 0,0,7); ctx.fill();
+
+  ctx.save();
+  ctx.translate(cx, fy - lift - bob);
+  ctx.rotate(lean*0.12);
+  ctx.shadowColor='#00ffd5'; ctx.shadowBlur=16;
+
+  const skin='#f6c9a6', skinSh='#e0a883';
+  const top='#00ffd5', skirt='#ff2bd6', hair='#ff3da6';
+
+  if(G.sliding){
+    // crouched slide — low and compact
+    ctx.shadowBlur=10;
+    limb(-1.2*u,-1.1*u, 1.6*u,-0.5*u, 1.5*u, skin);          // back leg out
+    limb(-0.2*u,-1.3*u, 1.7*u,-1.4*u, 1.4*u, skinSh);        // front leg
+    ctx.fillStyle=skirt; roundRect(-1.4*u,-2.2*u,2.2*u,1.3*u,0.5*u); ctx.fill();
+    ctx.fillStyle=top;   roundRect(-1.7*u,-2.9*u,1.6*u,1.4*u,0.5*u); ctx.fill();
+    ctx.fillStyle=skin;  ctx.beginPath(); ctx.arc(-2.1*u,-2.6*u,0.85*u,0,7); ctx.fill();
+    ctx.fillStyle=hair;  ctx.beginPath(); ctx.ellipse(-1.4*u,-2.7*u,1.0*u,0.6*u,0.2,0,7); ctx.fill();
+    ctx.restore(); return;
   }
+
+  // hip / shoulder reference (y negative = up)
+  const hipY=-3.7*u, shY=-6.5*u, headY=-7.9*u, hr=0.95*u;
+
+  // ---- LEGS (scissor) : q>0 swings back & lifts
+  const legCol=skin, legW=0.7*u;
+  function leg(side, q){
+    const hx = side*0.5*u;
+    const footX = hx + q*1.3*u;
+    const footY = -Math.max(0,q)*1.4*u;          // lift when swinging back
+    const kneeX = hx + q*0.7*u;
+    const kneeY = (hipY*0.5) + (footY*0.5) - 0.5*u;
+    limb(hx,hipY, kneeX,kneeY, legW, side>0?legCol:skinSh);     // thigh
+    limb(kneeX,kneeY, footX,footY, legW*0.8, side>0?legCol:skinSh); // shin
+    // shoe
+    ctx.fillStyle='#11122a';
+    ctx.beginPath(); ctx.ellipse(footX,footY-0.05*u,0.55*u,0.35*u,0,0,7); ctx.fill();
+  }
+  // draw back leg first (the one swinging back / lifted)
+  if(p>=0){ leg(-1,-p); leg(1,p); } else { leg(1,p); leg(-1,-p); }
+
+  // ---- SKIRT (flared) — female cue
+  ctx.fillStyle=skirt; ctx.shadowColor='#ff2bd6'; ctx.shadowBlur=14;
+  ctx.beginPath();
+  ctx.moveTo(-0.7*u,hipY-0.3*u); ctx.lineTo(0.7*u,hipY-0.3*u);
+  ctx.lineTo(1.25*u,hipY+0.9*u); ctx.lineTo(-1.25*u,hipY+0.9*u); ctx.closePath();
+  ctx.fill();
+
+  // ---- TORSO : narrow waist -> shoulders (tapered back)
+  ctx.shadowColor='#00ffd5'; ctx.shadowBlur=16;
+  const g=ctx.createLinearGradient(0,shY,0,hipY);
+  g.addColorStop(0,'#9bfff0'); g.addColorStop(1,'#00c9ac');
+  ctx.fillStyle=g;
+  ctx.beginPath();
+  ctx.moveTo(-1.0*u,shY); ctx.lineTo(1.0*u,shY);          // shoulders (wider)
+  ctx.quadraticCurveTo(0.95*u,(shY+hipY)/2, 0.85*u,hipY); // right side, slight waist
+  ctx.lineTo(-0.85*u,hipY);
+  ctx.quadraticCurveTo(-0.95*u,(shY+hipY)/2, -1.0*u,shY);
+  ctx.closePath(); ctx.fill();
+
+  // ---- ARMS (swing opposite to legs)
+  function arm(side,q){
+    const sx=side*0.95*u;
+    const elbowX=sx+q*0.5*u, elbowY=shY+1.4*u;
+    const handX=sx+q*1.1*u,  handY=shY+2.4*u - Math.max(0,q)*0.4*u;
+    limb(sx,shY+0.2*u, elbowX,elbowY, 0.5*u, skinSh);
+    limb(elbowX,elbowY, handX,handY, 0.45*u, skin);
+  }
+  arm(-1,p); arm(1,-p);
+
+  // ---- NECK + HEAD (back of head)
+  ctx.fillStyle=skin; ctx.shadowColor='#00ffd5'; ctx.shadowBlur=10;
+  ctx.fillRect(-0.3*u,shY-0.6*u,0.6*u,0.8*u);            // neck
+  ctx.beginPath(); ctx.arc(0,headY,hr,0,7); ctx.fill();   // head
+
+  // ---- HAIR + PONYTAIL streaming down the back, swaying
+  ctx.fillStyle=hair; ctx.shadowColor='#ff2bd6'; ctx.shadowBlur=14;
+  ctx.beginPath(); ctx.arc(0,headY-0.1*u,hr*1.02,Math.PI*0.05,Math.PI*0.95); // hair cap
+  ctx.arc(0,headY-0.15*u,hr*0.9,Math.PI*0.95,Math.PI*0.05,true); ctx.fill();
+  const sway = Math.sin(phase*0.5)*0.5*u;
+  ctx.beginPath();
+  ctx.moveTo(-0.5*u,headY+0.2*u);
+  ctx.quadraticCurveTo(sway-0.3*u, headY+1.6*u, sway, shY+0.4*u);   // ponytail
+  ctx.quadraticCurveTo(sway+0.7*u, headY+1.6*u, 0.5*u, headY+0.2*u);
+  ctx.closePath(); ctx.fill();
+  // tie
+  ctx.fillStyle='#00ffd5'; ctx.shadowBlur=0;
+  ctx.fillRect(-0.28*u,headY+0.1*u,0.56*u,0.3*u);
+
+  ctx.restore();
+  ctx.shadowBlur=0;
 }
 
 //================================================================ MAIN
